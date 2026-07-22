@@ -1,43 +1,81 @@
-# Bare Metal Raspberry PI Pico 2
- A bare metal C programming environment for the Raspberry Pi Pico 2 with minimal dependences.  This is "true" minimalistic bare metal C with no SDK, CMSIS, or other layers between programmer and the hardware; it does, however, include header files defining all hardware registers.  Features include: 
-- a USB CDC serial driver that uses no system RAM (only USB DPRAM) and provides a virtual COM port
-- header files that provide for standard register naming
-- stub files for Newlib-nano
-- very few examples (see Motivation below)  
-- a python-based tool to create UF2 files.
-- the ability to create the following types of program images
-    - Execute from flash, which uses the XIP cache (best for programs that need lots of RAM)
-    - Execute from ram, which copies the program from flash to ram prior to execution (best for minimizing the effects of XIP caching on program run times)
-    - RAM-only, which creaats a RAM-only UF2 that will not overwrite the flash (great for debugging)
+# Real-Time Accelerometer Authentication LED Controller
 
-# Motivation
-  This environment was developed for use in an embedded systems course at Binghamton University.  Because of this use case, the number of example programs is purposely limited.  While a software-development kit (SDK) facilitates rapid development and improves portability, it adds a layer of abstraction that hides many of the low-level hardware features, which is undesirable for bare-metal embedded systems education since the skills have limited transferability.  SDKs also produce bloated code, generate excessive files on disk, take too long to compile simple programs, and are overly complicated when building small programs. 
+## Overview
 
-# Status
-This environment has been tested and should be relatively bug free.
- 
-# Accessing Hardware Registers
-Each peripheral (e.g. UART) and CPU subsystem (e.g. PLL) has an include file (e.g. rp2350/pll.h) that can be included to use the register definitions and field macros.  There are two register naming conventions defined.  Either or both can be used simultaneously.  
+This project implements a bare-metal embedded system on the Raspberry Pi Pico that combines USB password authentication, real-time accelerometer processing, and adaptive LED control.
 
-1. The register block for a peripheral is overlayed with a struct having the same name as the peripheral (from the datasheet).  To access a register, use peripheral.register notation. For example, the RP2350 datasheet shows pll\_sys has a cs register;this would be accessed using pll\_sys.cs.  To use the atomic versions of the registers, add the suffix \_set, \_clr, or \_xor to the register name (e.g. pll\_sys.cs\_clr).  The included example LED driver should make this evident.
+The system starts in a locked state and requires the user to enter a password through USB serial communication. Once authenticated, accelerometer data is continuously sampled and processed to control LED blink behavior based on detected motion intensity.
 
-2. A preprocessor macro is created for each peripheral/register.  Following the example above, the corresponding registers are PLL\_SYS\_CS and PLL\_SYS\_CS\_CLR.  
+The project was developed for a Real-Time Embedded Systems course to demonstrate low-level hardware interaction, finite state machines, sensor data processing, and real-time firmware design.
 
-# Included Examples
- A sample C program to flash the LED on the Pico 2 is provided in the src directory.  To make the UF2, run the command 
+## Features
 
-LIBS="led.o" make test\_led.uf2
+- Bare-metal Raspberry Pi Pico firmware
+- USB CDC serial password authentication system
+- Finite state machine based system control
+- Real-time accelerometer data acquisition through SPI
+- Moving average filtering for sensor noise reduction
+- Adaptive LED blinking based on acceleration magnitude
+- Hardware timer interrupt handling using SysTick
+- Watchdog timer integration for system reliability
 
-at the prompt in the top level of the hierarchy (same directory as Makefile).
+## System Operation
 
-A C program to demonstrate low-level use of the USB CDC driver is included.  It echos back characters received on the serial port.  To build the UF2 file, run the command
+### 1. Authentication State Machine
 
-LIBS="usbcdc.o" make test\_usbcdc.uf2
+The system begins in a locked state:
 
-A program to test Newlib using the USB CDC serial driver is included.  To build the UF2 file, run the command
+- Waits for user input through USB serial
+- Collects a 4-digit password
+- Compares the entered password against the stored password
+- Transitions to the unlocked state after successful authentication
 
-LIBS="usbcdc.o" make test\_newlib.uf2 
+States:
+- `LOCKED`
+- `INPUT_PWD`
+- `VERIFY_PWD`
+- `UNLOCKED`
 
-A program that flashes the LED using SysTick.  To build the UF2 file, run the command
+### 2. Accelerometer Processing
 
-LIBS="led.o systick.o" make test\_systick.uf2
+After authentication:
+
+- Accelerometer samples are continuously requested
+- Raw acceleration values are filtered using a moving average filter
+- Processed values are evaluated against a threshold
+- LED behavior changes based on detected motion level
+
+### 3. LED Control State Machine
+
+The LED controller uses a separate FSM:
+
+Low Acceleration:
+- Slower LED blinking pattern
+
+High Acceleration:
+- Faster LED blinking pattern when acceleration exceeds the threshold
+
+States:
+- `LOW_ACCEL_VAL`
+- `HIGH_ACCEL_VAL`
+
+## Technical Implementation
+
+- Language: C
+- Platform: Raspberry Pi Pico
+- Communication:
+  - SPI for accelerometer interface
+  - USB CDC for serial communication
+- Timing:
+  - SysTick interrupt for periodic tasks
+  - Watchdog timer for fault recovery
+
+## Key Concepts Demonstrated
+
+- Register-level embedded programming
+- Real-time event handling
+- Finite state machine architecture
+- Sensor data filtering
+- Interrupt-driven design
+- Hardware peripheral configuration
+
