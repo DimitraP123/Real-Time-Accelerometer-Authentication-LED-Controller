@@ -1,0 +1,291 @@
+
+############################################################
+./readme.txt
+
+############################################################
+The program meets all requirements listed in the assignment.
+############################################################
+./drivers/servo.h
+
+############################################################
+/* 
+ | Programmer: Dimitra Pando
+ |
+ | This purpose of this file is to declare function 
+ | prototypes used in the servo driver. Including 
+ | the prototypes used to configure the hardware and 
+ | positioning the servo.
+ */
+
+#ifndef SERVO_H 
+#define SERVO_H
+
+#include <stdbool.h>
+#include <stdint.h> 
+
+void configure_servo(void);
+void rotate_servo(int16_t rotate);
+
+#endif
+
+############################################################
+./drivers/servo.c
+
+############################################################
+/* 
+ | Programmer: Dimitra Pando
+ |
+ | The purpose of this file is to implement the low-level driver 
+ | for a servo motor. It configures GPIO, pads, and the PWM
+ | hardware necessary. This file also contains the rotate_servo() 
+ | function, which is used to position the servo motor.
+ */
+
+#include "servo.h"
+#include <rp2350/resets.h>
+#include <rp2350/sio.h>
+#include <rp2350/io_bank0.h>
+#include <rp2350/pads_bank0.h>
+#include <rp2350/pwm.h>
+#include <stdint.h>
+
+#define SERVO_OFFSET 290
+#define SERVO_MAX (2500 + SERVO_OFFSET)
+#define SERVO_ZERO (1500 + SERVO_OFFSET)
+#define SERVO_MIN (500 + SERVO_OFFSET)
+
+#define SERVO_RESETS (RESETS_RESET_IO_BANK0_MASK | RESETS_RESET_PADS_BANK0_MASK | RESETS_RESET_PWM_MASK)
+
+void configure_servo(void)
+{
+    RESETS_RESET_CLR = SERVO_RESETS;
+
+    while((RESETS_RESET_DONE & SERVO_RESETS ) != SERVO_RESETS )
+    	continue;
+
+    PADS_BANK0_GPIO0 = 
+	PADS_BANK0_GPIO0_OD(0) 
+	| PADS_BANK0_GPIO0_IE(0) 
+	| PADS_BANK0_GPIO0_DRIVE(0) 
+	| PADS_BANK0_GPIO0_PUE(0) 
+	| PADS_BANK0_GPIO0_PDE(0) 
+	| PADS_BANK0_GPIO0_SCHMITT(0) 
+	| PADS_BANK0_GPIO0_SLEWFAST(0);
+
+    IO_BANK0_GPIO0_CTRL = 
+	IO_BANK0_GPIO0_CTRL_IRQOVER(0) |
+	IO_BANK0_GPIO0_CTRL_INOVER(0)  |
+	IO_BANK0_GPIO0_CTRL_OEOVER(0)  |
+	IO_BANK0_GPIO0_CTRL_OUTOVER(0) |
+	IO_BANK0_GPIO0_CTRL_FUNCSEL(4); 
+
+    PWM_CH0_DIV = PWM_CH0_DIV_INT(144) | PWM_CH0_DIV_FRAC(0);
+    PWM_CH0_TOP = 49999;
+
+    rotate_servo(0);   
+
+    PWM_CH0_CSR =
+        PWM_CH0_CSR_PH_ADV(0)
+        | PWM_CH0_CSR_PH_RET(0)
+        | PWM_CH0_CSR_DIVMODE(0)
+        | PWM_CH0_CSR_B_INV(0)   
+        | PWM_CH0_CSR_A_INV(0)
+        | PWM_CH0_CSR_PH_CORRECT(0)
+        | PWM_CH0_CSR_EN(1);
+}
+
+void rotate_servo(int16_t rotate)
+{
+    int32_t duty = SERVO_ZERO + rotate;
+
+    if(duty > SERVO_MAX)
+    {
+        duty = SERVO_MAX;
+    }
+
+    else if(duty < SERVO_MIN)
+    {
+        duty = SERVO_MIN;
+    }
+        
+    PWM_CH0_CC = PWM_CH0_CC_A(duty);
+}
+############################################################
+./src/assign7.c
+
+############################################################
+/* 
+ | Programmer: Dimitra Pando
+ |
+ | This program implements a synchronous (FSM) that controls
+ | a servo using USBCDC. The FSM differentiates between single
+ | taps and double taps of a keyboard key, specifically 'l' and
+ | 'r' using systick timing.
+ */
+
+#include <stdint.h>
+#include "servo.h"
+#include "usbcdc.h"
+#include "systick.h"
+
+#define STEPSIZE 100
+#define DOUBLE_TAP_TICK_WINDOW 200
+
+typedef enum {
+    SERVO_IDLE,
+    SINGLE_KEY_TAP,
+    DOUBLE_KEY_TAP
+} servo_fsm_state_t;
+
+static servo_fsm_state_t servo_state = SERVO_IDLE;
+static char last_key = 0;
+static uint32_t first_tap_timestamp = 0;
+static int16_t current_servo_position = 0;
+
+static void usbcdc_callback_FSM(void);
+
+int main(void)
+{
+    configure_servo();
+    configure_systick();
+    configure_usbcdc();
+    register_systick_callback(usbcdc_callback_FSM);
+
+    while (1)
+    {
+        __asm__("WFI");
+        if (!system_tick())
+        {
+            continue;
+        }
+    }
+}
+
+static void usbcdc_callback_FSM(void)
+{
+    static uint32_t tick = 0;
+    uint32_t time_since_first_tap = tick - first_tap_timestamp;
+    tick++;
+
+    char usbcdc_key = 0;
+    char key_pressed = 0;
+    char key_received = 0;
+
+    if (usbcdc_getchar(&usbcdc_key))
+    {
+        key_pressed = usbcdc_key;
+        key_received = 1;
+    }
+
+    switch (servo_state)
+    {
+        case SERVO_IDLE:
+        {
+            if (key_received && (key_pressed == 'l' || key_pressed == 'r'))
+            {
+                last_key = key_pressed;
+
+                first_tap_timestamp = tick;
+
+                servo_state = SINGLE_KEY_TAP;
+            }
+            break;
+        }
+
+        case SINGLE_KEY_TAP:
+        {
+            if (time_since_first_tap > DOUBLE_TAP_TICK_WINDOW)
+            {
+                if (last_key == 'l')
+                {
+                    current_servo_position += STEPSIZE;
+                }
+                else if (last_key == 'r')
+                {
+                    current_servo_position -= STEPSIZE;
+                }
+
+                rotate_servo(current_servo_position);
+                servo_state = SERVO_IDLE;
+                break;
+            }
+
+            if (key_received && key_pressed == last_key)
+            {
+                servo_state = DOUBLE_KEY_TAP;
+                break;
+            }
+
+            if (key_received && key_pressed != last_key)
+            {
+                if (last_key == 'l')
+                {
+                    current_servo_position += STEPSIZE;
+                }
+                else if (last_key == 'r')
+                {
+                    current_servo_position -= STEPSIZE;
+                }
+
+                rotate_servo(current_servo_position);
+                servo_state = SERVO_IDLE;
+                break;
+            }
+
+            break;
+        }
+
+        case DOUBLE_KEY_TAP:
+        {
+            if (last_key == 'l')
+            {
+                current_servo_position += (STEPSIZE / 2);
+            }
+
+            else
+            {
+                current_servo_position -= (STEPSIZE / 2);
+            }
+
+            rotate_servo(current_servo_position);
+            servo_state = SERVO_IDLE;
+            break;
+        }
+    }
+}
+############################################################
+./make.txt
+
+############################################################
+arm-none-eabi-gcc -ffreestanding -march=armv8-m.main+fp+dsp -mfloat-abi=hard -mthumb -std=c11 -pedantic -Wno-attributes -Os  -Idrivers -Ibaremetal/include -Ilib -Iinclude -fdata-sections -ffunction-sections -Xlinker -gc-sections -Wall -c drivers/usbcdc.c -o usbcdc.o
+arm-none-eabi-gcc -ffreestanding -march=armv8-m.main+fp+dsp -mfloat-abi=hard -mthumb -std=c11 -pedantic -Wno-attributes -Os  -Idrivers -Ibaremetal/include -Ilib -Iinclude -fdata-sections -ffunction-sections -Xlinker -gc-sections -Wall -c drivers/servo.c -o servo.o
+arm-none-eabi-gcc -ffreestanding -march=armv8-m.main+fp+dsp -mfloat-abi=hard -mthumb -std=c11 -pedantic -Wno-attributes -Os  -Idrivers -Ibaremetal/include -Ilib -Iinclude -fdata-sections -ffunction-sections -Xlinker -gc-sections -Wall -c drivers/systick.c -o systick.o
+arm-none-eabi-gcc -ffreestanding -march=armv8-m.main+fp+dsp -mfloat-abi=hard -mthumb -std=c11 -pedantic -Wno-attributes -Os  -Idrivers -Ibaremetal/include -Ilib -Iinclude -fdata-sections -ffunction-sections -Xlinker -gc-sections -Wall -c baremetal/_crt0.c -o _crt0.o
+arm-none-eabi-gcc -ffreestanding -march=armv8-m.main+fp+dsp -mfloat-abi=hard -mthumb -std=c11 -pedantic -Wno-attributes -Os  -Idrivers -Ibaremetal/include -Ilib -Iinclude -fdata-sections -ffunction-sections -Xlinker -gc-sections -Wall -c baremetal/_flash_init.c -o _flash_init.o
+arm-none-eabi-gcc -ffreestanding -march=armv8-m.main+fp+dsp -mfloat-abi=hard -mthumb -std=c11 -pedantic -Wno-attributes -Os  -Idrivers -Ibaremetal/include -Ilib -Iinclude -fdata-sections -ffunction-sections -Xlinker -gc-sections -Wall -c baremetal/_newlib_stubs.c -o _newlib_stubs.o
+arm-none-eabi-gcc -ffreestanding -march=armv8-m.main+fp+dsp -mfloat-abi=hard -mthumb -std=c11 -pedantic -Wno-attributes -Os  -Idrivers -Ibaremetal/include -Ilib -Iinclude -fdata-sections -ffunction-sections -Xlinker -gc-sections -Wall -nostartfiles -specs=nano.specs -T baremetal/_flash.ld  -o assign7.elf src/assign7.c usbcdc.o servo.o systick.o _crt0.o _flash_init.o _newlib_stubs.o
+
+Generated Program has the following segments: n
+
+section   size  addr
+.boot     296   0x10000000
+TEXT      1886  0x10000128
+BSS       40    0x20000000
+.comment  34    0x00000000
+tools/elf2uf2.py -v assign7.elf
+assign7.elf is valid 32b ARM little-endian ELF file
+ELF contains loadable flash segment at 0x10000000
+Skipping program header for non-loadable segment
+Flash only binary; UF2 will program flash.
+Processing 2182 byte segment at physical address 10000000
+Writing output to assign7.uf2
+Writing UF2 record of 256B @ addr 0x10000000
+Writing UF2 record of 256B @ addr 0x10000100
+Writing UF2 record of 256B @ addr 0x10000200
+Writing UF2 record of 256B @ addr 0x10000300
+Writing UF2 record of 256B @ addr 0x10000400
+Writing UF2 record of 256B @ addr 0x10000500
+Writing UF2 record of 256B @ addr 0x10000600
+Writing UF2 record of 256B @ addr 0x10000700
+Writing UF2 record of 256B @ addr 0x10000800
+rm _crt0.o assign7.elf _newlib_stubs.o servo.o usbcdc.o _flash_init.o systick.o
